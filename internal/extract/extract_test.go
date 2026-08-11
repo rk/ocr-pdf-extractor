@@ -61,6 +61,41 @@ func TestOptionsDefaults(t *testing.T) {
 	}
 }
 
+func TestStripCleanupWrapper(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"plain text", "plain text"},
+		{"```\nhello\n```", "hello"},
+		{"```text\nhello\nworld\n```", "hello\nworld"},
+	}
+	for _, tc := range tests {
+		got := stripCleanupWrapper(tc.in)
+		if got != tc.want {
+			t.Errorf("stripCleanupWrapper(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestStripMarkdownArtifacts(t *testing.T) {
+	in := "**Character Creation** see [westendgames.com](http://westendgames.com)\n## Heading\nbody"
+	want := "Character Creation see westendgames.com\nHeading\nbody"
+	got := stripMarkdownArtifacts(in)
+	if got != want {
+		t.Fatalf("stripMarkdownArtifacts() = %q, want %q", got, want)
+	}
+}
+
+func TestOllamaOptionDefaults(t *testing.T) {
+	opts := Options{}
+	if opts.ollamaURL() != DefaultOllamaURL {
+		t.Fatalf("ollamaURL() = %q, want %q", opts.ollamaURL(), DefaultOllamaURL)
+	}
+	if opts.ollamaModel() != DefaultOllamaModel {
+		t.Fatalf("ollamaModel() = %q, want %q", opts.ollamaModel(), DefaultOllamaModel)
+	}
+}
+
 func TestPageNeedsOCRDecision(t *testing.T) {
 	tests := []struct {
 		name    string

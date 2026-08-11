@@ -11,6 +11,7 @@ var requiredTools = []string{
 	"pdftotext",
 	"pdfimages",
 	"tesseract",
+	"pdftoppm",
 }
 
 // CheckDependencies verifies that all external tools are available on PATH.

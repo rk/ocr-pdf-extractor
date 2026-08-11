@@ -1,3 +1,6 @@
 /ocr-pdf-extractor
 *.tmp
 *.test
+.pdftest/
+*.pdf
+.DS_Store

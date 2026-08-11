@@ -25,8 +25,21 @@ type Options struct {
 	Lang string
 	// MinCharsPerPage is the minimum trimmed character count for pdftotext fast path.
 	MinCharsPerPage int
-	// MaxPages limits processing to the first N pages (0 means all pages).
+	// MaxPages limits processing to N pages starting at FirstPage (0 means through end).
 	MaxPages int
+	// FirstPage is the first page to process (1-based, default 1).
+	FirstPage int
+	// Layout passes -layout to pdftotext, preserving physical multi-column layout.
+	// When false (default), pdftotext uses reading order (typically one column at a time).
+	Layout bool
+	// Cleanup runs each page through Ollama with the page image + extracted text.
+	Cleanup bool
+	// OllamaURL is the Ollama base URL (default http://127.0.0.1:11434).
+	OllamaURL string
+	// OllamaModel is the Ollama model name (default ministral-3:latest).
+	OllamaModel string
+	// CleanupDPI is the pdftoppm resolution used for cleanup page images.
+	CleanupDPI int
 }
 
 func (o Options) minChars() int {
@@ -65,8 +78,25 @@ func Extract(inputPath, outputPath string, opts Options) error {
 	}
 
 	lastPage := pageCount
-	if opts.MaxPages > 0 && opts.MaxPages < lastPage {
-		lastPage = opts.MaxPages
+	firstPage := 1
+	if opts.FirstPage > 1 {
+		firstPage = opts.FirstPage
+	}
+	if firstPage > pageCount {
+		return fmt.Errorf("first page %d is beyond document length (%d)", firstPage, pageCount)
+	}
+	if opts.MaxPages > 0 {
+		lastPage = firstPage + opts.MaxPages - 1
+		if lastPage > pageCount {
+			lastPage = pageCount
+		}
+	}
+
+	if opts.Cleanup {
+		if err := checkOllama(opts); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "cleanup enabled via ollama vision (%s)\n", opts.ollamaModel())
 	}
 
 	tmpDir, err := os.MkdirTemp("", "ocr-pdf-extractor-*")
@@ -75,8 +105,10 @@ func Extract(inputPath, outputPath string, opts Options) error {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	if !opts.ForceOCR {
-		text, usedFastPath, err := tryWholeDocumentText(inputPath, lastPage, opts.minChars())
+	// Vision cleanup needs each page image, so skip the whole-document fast path.
+	useWholeDoc := !opts.ForceOCR && !opts.Cleanup && firstPage == 1
+	if useWholeDoc {
+		text, usedFastPath, err := tryWholeDocumentText(inputPath, lastPage, opts)
 		if err != nil {
 			return err
 		}
@@ -87,16 +119,24 @@ func Extract(inputPath, outputPath string, opts Options) error {
 			}
 			return out.close()
 		}
-	} else {
+	} else if opts.ForceOCR {
 		fmt.Fprintf(os.Stderr, "force-ocr: skipping pdftotext fast path\n")
 	}
 
-	for page := 1; page <= lastPage; page++ {
+	for page := firstPage; page <= lastPage; page++ {
 		fmt.Fprintf(os.Stderr, "page %d/%d\n", page, lastPage)
 
 		pageText, err := extractPage(inputPath, tmpDir, page, opts)
 		if err != nil {
 			return fmt.Errorf("page %d: %w", page, err)
+		}
+
+		if opts.Cleanup {
+			fmt.Fprintf(os.Stderr, "  cleanup via ollama (image+text)\n")
+			pageText, err = cleanupPage(inputPath, tmpDir, pageText, page, opts)
+			if err != nil {
+				return fmt.Errorf("page %d cleanup: %w", page, err)
+			}
 		}
 
 		if err := out.writePage(pageText); err != nil {
@@ -128,8 +168,9 @@ func pageCount(inputPath string) (int, error) {
 	return count, nil
 }
 
-func tryWholeDocumentText(inputPath string, pageCount, minChars int) (string, bool, error) {
-	text, err := pdftotext(inputPath, 0, 0)
+func tryWholeDocumentText(inputPath string, pageCount int, opts Options) (string, bool, error) {
+	minChars := opts.minChars()
+	text, err := pdftotext(inputPath, 0, 0, opts.Layout)
 	if err != nil {
 		return "", false, err
 	}
@@ -139,7 +180,7 @@ func tryWholeDocumentText(inputPath string, pageCount, minChars int) (string, bo
 	}
 
 	for page := 1; page <= pageCount; page++ {
-		needs, err := pageNeedsOCR(inputPath, page, minChars)
+		needs, err := pageNeedsOCR(inputPath, page, opts)
 		if err != nil {
 			return "", false, err
 		}
@@ -151,7 +192,7 @@ func tryWholeDocumentText(inputPath string, pageCount, minChars int) (string, bo
 	return text, true, nil
 }
 
-func pageNeedsOCR(inputPath string, page, minChars int) (bool, error) {
+func pageNeedsOCR(inputPath string, page int, opts Options) (bool, error) {
 	images, err := substantialImageCount(inputPath, page, page)
 	if err != nil {
 		return false, err
@@ -160,11 +201,11 @@ func pageNeedsOCR(inputPath string, page, minChars int) (bool, error) {
 		return false, nil
 	}
 
-	pageText, err := pdftotext(inputPath, page, page)
+	pageText, err := pdftotext(inputPath, page, page, opts.Layout)
 	if err != nil {
 		return false, err
 	}
-	return pageNeedsOCRDecision(true, pageText, minChars), nil
+	return pageNeedsOCRDecision(true, pageText, opts.minChars()), nil
 }
 
 func pageNeedsOCRDecision(hasSubstantialImages bool, pageText string, minChars int) bool {
@@ -176,7 +217,7 @@ func pageNeedsOCRDecision(hasSubstantialImages bool, pageText string, minChars i
 
 func extractPage(inputPath, tmpDir string, page int, opts Options) (string, error) {
 	if !opts.ForceOCR {
-		text, err := pdftotext(inputPath, page, page)
+		text, err := pdftotext(inputPath, page, page, opts.Layout)
 		if err != nil {
 			return "", err
 		}
@@ -190,8 +231,11 @@ func extractPage(inputPath, tmpDir string, page int, opts Options) (string, erro
 	return ocrPage(inputPath, tmpDir, page, opts)
 }
 
-func pdftotext(inputPath string, firstPage, lastPage int) (string, error) {
-	args := []string{"-layout"}
+func pdftotext(inputPath string, firstPage, lastPage int, layout bool) (string, error) {
+	var args []string
+	if layout {
+		args = append(args, "-layout")
+	}
 	if firstPage > 0 {
 		args = append(args, "-f", strconv.Itoa(firstPage))
 	}
