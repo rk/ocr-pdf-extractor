@@ -38,8 +38,14 @@ go build -o ocr-pdf-extractor ./cmd/ocr-pdf-extractor
 ## Usage
 
 ```bash
-ocr-pdf-extractor <input.pdf> <output.txt>
+ocr-pdf-extractor [options] <input.pdf> <output.txt>
 ```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `-force-ocr` | Skip `pdftotext` and always use `pdfimages` + `tesseract` (slow path) |
 
 ### Example
 

@@ -18,8 +18,14 @@ const (
 
 var pageCountRE = regexp.MustCompile(`(?m)^Pages:\s+(\d+)`)
 
+// Options configures the extraction pipeline.
+type Options struct {
+	// ForceOCR skips pdftotext and always uses pdfimages + tesseract.
+	ForceOCR bool
+}
+
 // Extract runs the full PDF text extraction pipeline.
-func Extract(inputPath, outputPath string) error {
+func Extract(inputPath, outputPath string, opts Options) error {
 	if err := validateInput(inputPath); err != nil {
 		return err
 	}
@@ -35,20 +41,24 @@ func Extract(inputPath, outputPath string) error {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	text, usedFastPath, err := tryWholeDocumentText(inputPath, pageCount)
-	if err != nil {
-		return err
-	}
-	if usedFastPath {
-		fmt.Fprintf(os.Stderr, "using pdftotext (whole document)\n")
-		return writeOutput(outputPath, text)
+	if !opts.ForceOCR {
+		text, usedFastPath, err := tryWholeDocumentText(inputPath, pageCount)
+		if err != nil {
+			return err
+		}
+		if usedFastPath {
+			fmt.Fprintf(os.Stderr, "using pdftotext (whole document)\n")
+			return writeOutput(outputPath, text)
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "force-ocr: skipping pdftotext fast path\n")
 	}
 
 	var builder strings.Builder
 	for page := 1; page <= pageCount; page++ {
 		fmt.Fprintf(os.Stderr, "page %d/%d\n", page, pageCount)
 
-		pageText, err := extractPage(inputPath, tmpDir, page)
+		pageText, err := extractPage(inputPath, tmpDir, page, opts.ForceOCR)
 		if err != nil {
 			return fmt.Errorf("page %d: %w", page, err)
 		}
@@ -110,14 +120,16 @@ func tryWholeDocumentText(inputPath string, pageCount int) (string, bool, error)
 	return "", false, nil
 }
 
-func extractPage(inputPath, tmpDir string, page int) (string, error) {
-	text, err := pdftotext(inputPath, page, page)
-	if err != nil {
-		return "", err
-	}
-	if len(strings.TrimSpace(text)) >= minCharsPerPage {
-		fmt.Fprintf(os.Stderr, "  using pdftotext\n")
-		return text, nil
+func extractPage(inputPath, tmpDir string, page int, forceOCR bool) (string, error) {
+	if !forceOCR {
+		text, err := pdftotext(inputPath, page, page)
+		if err != nil {
+			return "", err
+		}
+		if len(strings.TrimSpace(text)) >= minCharsPerPage {
+			fmt.Fprintf(os.Stderr, "  using pdftotext\n")
+			return text, nil
+		}
 	}
 
 	fmt.Fprintf(os.Stderr, "  using pdfimages+tesseract\n")

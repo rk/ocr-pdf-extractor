@@ -9,8 +9,10 @@ import (
 )
 
 func main() {
+	forceOCR := flag.Bool("force-ocr", false, "skip pdftotext and always use pdfimages+tesseract (slow path)")
+
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: ocr-pdf-extractor <input.pdf> <output.txt>\n")
+		fmt.Fprintf(os.Stderr, "Usage: ocr-pdf-extractor [options] <input.pdf> <output.txt>\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -29,7 +31,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	if err := extract.Extract(inputPath, outputPath); err != nil {
+	if err := extract.Extract(inputPath, outputPath, extract.Options{ForceOCR: *forceOCR}); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(3)
 	}
