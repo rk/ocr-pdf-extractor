@@ -12,8 +12,7 @@ import (
 )
 
 const (
-	minCharsPerPage     = 50
-	wholeDocCharFactor  = 50
+	DefaultMinCharsPerPage = 50
 )
 
 var pageCountRE = regexp.MustCompile(`(?m)^Pages:\s+(\d+)`)
@@ -22,17 +21,52 @@ var pageCountRE = regexp.MustCompile(`(?m)^Pages:\s+(\d+)`)
 type Options struct {
 	// ForceOCR skips pdftotext and always uses pdfimages + tesseract.
 	ForceOCR bool
+	// Lang is the Tesseract language code (default "eng").
+	Lang string
+	// MinCharsPerPage is the minimum trimmed character count for pdftotext fast path.
+	MinCharsPerPage int
+	// MaxPages limits processing to the first N pages (0 means all pages).
+	MaxPages int
+}
+
+func (o Options) minChars() int {
+	if o.MinCharsPerPage > 0 {
+		return o.MinCharsPerPage
+	}
+	return DefaultMinCharsPerPage
+}
+
+func (o Options) lang() string {
+	if o.Lang != "" {
+		return o.Lang
+	}
+	return "eng"
 }
 
 // Extract runs the full PDF text extraction pipeline.
 func Extract(inputPath, outputPath string, opts Options) error {
-	if err := validateInput(inputPath); err != nil {
+	if err := validatePaths(inputPath, outputPath); err != nil {
 		return err
 	}
+
+	out, err := openOutput(outputPath)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			out.abort()
+		}
+	}()
 
 	pageCount, err := pageCount(inputPath)
 	if err != nil {
 		return fmt.Errorf("reading page count: %w", err)
+	}
+
+	lastPage := pageCount
+	if opts.MaxPages > 0 && opts.MaxPages < lastPage {
+		lastPage = opts.MaxPages
 	}
 
 	tmpDir, err := os.MkdirTemp("", "ocr-pdf-extractor-*")
@@ -42,48 +76,35 @@ func Extract(inputPath, outputPath string, opts Options) error {
 	defer os.RemoveAll(tmpDir)
 
 	if !opts.ForceOCR {
-		text, usedFastPath, err := tryWholeDocumentText(inputPath, pageCount)
+		text, usedFastPath, err := tryWholeDocumentText(inputPath, lastPage, opts.minChars())
 		if err != nil {
 			return err
 		}
 		if usedFastPath {
 			fmt.Fprintf(os.Stderr, "using pdftotext (whole document)\n")
-			return writeOutput(outputPath, text)
+			if err := out.writeAll(text); err != nil {
+				return err
+			}
+			return out.close()
 		}
 	} else {
 		fmt.Fprintf(os.Stderr, "force-ocr: skipping pdftotext fast path\n")
 	}
 
-	var builder strings.Builder
-	for page := 1; page <= pageCount; page++ {
-		fmt.Fprintf(os.Stderr, "page %d/%d\n", page, pageCount)
+	for page := 1; page <= lastPage; page++ {
+		fmt.Fprintf(os.Stderr, "page %d/%d\n", page, lastPage)
 
-		pageText, err := extractPage(inputPath, tmpDir, page, opts.ForceOCR)
+		pageText, err := extractPage(inputPath, tmpDir, page, opts)
 		if err != nil {
 			return fmt.Errorf("page %d: %w", page, err)
 		}
 
-		if builder.Len() > 0 {
-			builder.WriteString("\n\n")
+		if err := out.writePage(pageText); err != nil {
+			return err
 		}
-		builder.WriteString(pageText)
 	}
 
-	return writeOutput(outputPath, builder.String())
-}
-
-func validateInput(inputPath string) error {
-	info, err := os.Stat(inputPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("input file does not exist: %s", inputPath)
-		}
-		return fmt.Errorf("input file: %w", err)
-	}
-	if info.IsDir() {
-		return fmt.Errorf("input path is a directory: %s", inputPath)
-	}
-	return nil
+	return out.close()
 }
 
 func pageCount(inputPath string) (int, error) {
@@ -107,33 +128,66 @@ func pageCount(inputPath string) (int, error) {
 	return count, nil
 }
 
-func tryWholeDocumentText(inputPath string, pageCount int) (string, bool, error) {
+func tryWholeDocumentText(inputPath string, pageCount, minChars int) (string, bool, error) {
 	text, err := pdftotext(inputPath, 0, 0)
 	if err != nil {
 		return "", false, err
 	}
 
-	threshold := wholeDocCharFactor * pageCount
-	if len(strings.TrimSpace(text)) >= threshold {
-		return text, true, nil
+	if len(strings.TrimSpace(text)) < minChars*pageCount {
+		return "", false, nil
 	}
-	return "", false, nil
+
+	for page := 1; page <= pageCount; page++ {
+		needs, err := pageNeedsOCR(inputPath, page, minChars)
+		if err != nil {
+			return "", false, err
+		}
+		if needs {
+			return "", false, nil
+		}
+	}
+
+	return text, true, nil
 }
 
-func extractPage(inputPath, tmpDir string, page int, forceOCR bool) (string, error) {
-	if !forceOCR {
+func pageNeedsOCR(inputPath string, page, minChars int) (bool, error) {
+	images, err := substantialImageCount(inputPath, page, page)
+	if err != nil {
+		return false, err
+	}
+	if images == 0 {
+		return false, nil
+	}
+
+	pageText, err := pdftotext(inputPath, page, page)
+	if err != nil {
+		return false, err
+	}
+	return pageNeedsOCRDecision(true, pageText, minChars), nil
+}
+
+func pageNeedsOCRDecision(hasSubstantialImages bool, pageText string, minChars int) bool {
+	if !hasSubstantialImages {
+		return false
+	}
+	return len(strings.TrimSpace(pageText)) < minChars
+}
+
+func extractPage(inputPath, tmpDir string, page int, opts Options) (string, error) {
+	if !opts.ForceOCR {
 		text, err := pdftotext(inputPath, page, page)
 		if err != nil {
 			return "", err
 		}
-		if len(strings.TrimSpace(text)) >= minCharsPerPage {
+		if len(strings.TrimSpace(text)) >= opts.minChars() {
 			fmt.Fprintf(os.Stderr, "  using pdftotext\n")
 			return text, nil
 		}
 	}
 
 	fmt.Fprintf(os.Stderr, "  using pdfimages+tesseract\n")
-	return ocrPage(inputPath, tmpDir, page)
+	return ocrPage(inputPath, tmpDir, page, opts)
 }
 
 func pdftotext(inputPath string, firstPage, lastPage int) (string, error) {
@@ -157,7 +211,7 @@ func pdftotext(inputPath string, firstPage, lastPage int) (string, error) {
 	return string(out), nil
 }
 
-func ocrPage(inputPath, tmpDir string, page int) (string, error) {
+func ocrPage(inputPath, tmpDir string, page int, opts Options) (string, error) {
 	pageDir := filepath.Join(tmpDir, fmt.Sprintf("page-%d", page))
 	if err := os.MkdirAll(pageDir, 0o755); err != nil {
 		return "", fmt.Errorf("creating page temp dir: %w", err)
@@ -180,13 +234,12 @@ func ocrPage(inputPath, tmpDir string, page int) (string, error) {
 		return "", err
 	}
 	if len(images) == 0 {
-		fmt.Fprintf(os.Stderr, "  warning: no images extracted from page %d\n", page)
-		return "", nil
+		return "", fmt.Errorf("no extractable images on page %d for OCR", page)
 	}
 
 	var parts []string
 	for _, image := range images {
-		text, err := tesseract(image)
+		text, err := tesseract(image, opts.lang())
 		if err != nil {
 			return "", err
 		}
@@ -243,8 +296,8 @@ func naturalLess(a, b string) bool {
 	return a < b
 }
 
-func tesseract(imagePath string) (string, error) {
-	cmd := exec.Command("tesseract", imagePath, "stdout", "-l", "eng")
+func tesseract(imagePath, lang string) (string, error) {
+	cmd := exec.Command("tesseract", imagePath, "stdout", "-l", lang)
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -253,24 +306,4 @@ func tesseract(imagePath string) (string, error) {
 		return "", fmt.Errorf("tesseract on %s: %w", filepath.Base(imagePath), err)
 	}
 	return string(out), nil
-}
-
-func writeOutput(outputPath, text string) error {
-	dir := filepath.Dir(outputPath)
-	if dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("creating output directory: %w", err)
-		}
-	}
-
-	tmpPath := outputPath + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(text), 0o644); err != nil {
-		return fmt.Errorf("writing output: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, outputPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("finalizing output: %w", err)
-	}
-	return nil
 }
