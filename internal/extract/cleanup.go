@@ -21,7 +21,7 @@ const (
 	DefaultOllamaModel = "ministral-3:latest"
 	DefaultCleanupDPI  = 120
 
-	cleanupSystemPrompt = `You are correcting OCR and spelling errors in extracted PDF text using the page image as ground truth.
+	cleanupPlainSystemPrompt = `You are correcting OCR and spelling errors in extracted PDF text using the page image as ground truth.
 
 Rules:
 - Compare the extracted text to the attached page image and fix OCR mistakes, broken words, glued words, and obvious spelling errors.
@@ -32,6 +32,25 @@ Rules:
 - Do not add commentary, invented headings, or explanations.
 - Do not invent missing content; if text is truncated or unclear, leave it alone.
 - Output only the corrected plain text.`
+
+	cleanupMarkdownSystemPrompt = `You are correcting OCR and spelling errors in extracted PDF text using the page image as ground truth, and converting visible formatting into reasonable Markdown.
+
+Rules:
+- Compare the extracted text to the attached page image and fix OCR mistakes, broken words, glued words, and obvious spelling errors.
+- Prefer the image when the extracted text conflicts with what is visibly printed.
+- Infer Markdown structure from visual formatting on the page:
+  - Larger / heavier title text → # or ## headings (use hierarchy by relative size)
+  - Section headers → ## or ###
+  - Bold or strongly emphasized words → **bold**
+  - Italicized words → *italic*
+  - Bulleted or dashed lists → Markdown lists
+  - Numbered lists → ordered lists
+  - Simple tables only when clearly tabular on the page
+- Keep game terms, die codes (for example 3D+1), names, URLs, and numbers unchanged when they look intentional.
+- Do not wrap the whole page in a fenced code block.
+- Do not add commentary, invented sections, or explanations.
+- Do not invent missing content; if text is truncated or unclear, leave it alone.
+- Output only the corrected Markdown for this page.`
 )
 
 var (
@@ -137,10 +156,17 @@ func cleanupPage(inputPath, tmpDir, text string, page int, opts Options) (string
 }
 
 func cleanupWithImage(text string, imagePNG []byte, opts Options) (string, error) {
+	system := cleanupPlainSystemPrompt
+	prompt := "Here is the extracted text for this page image. Correct it using the image as ground truth:\n\n" + text
+	if opts.CleanupMarkdown {
+		system = cleanupMarkdownSystemPrompt
+		prompt = "Here is the extracted text for this page image. Correct it and format it as Markdown using the image as ground truth for wording and visual structure:\n\n" + text
+	}
+
 	reqBody := ollamaGenerateRequest{
 		Model:  opts.ollamaModel(),
-		System: cleanupSystemPrompt,
-		Prompt: "Here is the extracted text for this page image. Correct it using the image as ground truth:\n\n" + text,
+		System: system,
+		Prompt: prompt,
 		Stream: false,
 		Images: []string{base64.StdEncoding.EncodeToString(imagePNG)},
 		Options: map[string]interface{}{
@@ -177,7 +203,9 @@ func cleanupWithImage(text string, imagePNG []byte, opts Options) (string, error
 	}
 
 	cleaned := stripCleanupWrapper(parsed.Response)
-	cleaned = stripMarkdownArtifacts(cleaned)
+	if !opts.CleanupMarkdown {
+		cleaned = stripMarkdownArtifacts(cleaned)
+	}
 	if strings.TrimSpace(cleaned) == "" {
 		return text, nil
 	}
@@ -204,4 +232,32 @@ func stripMarkdownArtifacts(s string) string {
 	s = mdBoldRE.ReplaceAllString(s, "$1")
 	s = mdHeading.ReplaceAllString(s, "")
 	return s
+}
+
+func reportCleanupRuntime(elapsed time.Duration, pages int) {
+	minPerPage := 0.0
+	if pages > 0 {
+		minPerPage = elapsed.Minutes() / float64(pages)
+	}
+	fmt.Fprintf(os.Stderr, "total runtime %s; %.2f min/page\n", formatDuration(elapsed), minPerPage)
+}
+
+func formatDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	d = d.Round(time.Second)
+	h := int(d / time.Hour)
+	d -= time.Duration(h) * time.Hour
+	m := int(d / time.Minute)
+	d -= time.Duration(m) * time.Minute
+	s := int(d / time.Second)
+	switch {
+	case h > 0:
+		return fmt.Sprintf("%dh %dm %ds", h, m, s)
+	case m > 0:
+		return fmt.Sprintf("%dm %ds", m, s)
+	default:
+		return fmt.Sprintf("%ds", s)
+	}
 }

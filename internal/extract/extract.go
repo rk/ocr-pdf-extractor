@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -34,6 +35,9 @@ type Options struct {
 	Layout bool
 	// Cleanup runs each page through Ollama with the page image + extracted text.
 	Cleanup bool
+	// CleanupMarkdown asks the cleanup model to emit reasonable Markdown
+	// based on visual formatting in the page image (headings by size, emphasis, lists).
+	CleanupMarkdown bool
 	// OllamaURL is the Ollama base URL (default http://127.0.0.1:11434).
 	OllamaURL string
 	// OllamaModel is the Ollama model name (default ministral-3:latest).
@@ -54,6 +58,10 @@ func (o Options) lang() string {
 		return o.Lang
 	}
 	return "eng"
+}
+
+func (o Options) cleanupEnabled() bool {
+	return o.Cleanup || o.CleanupMarkdown
 }
 
 // Extract runs the full PDF text extraction pipeline.
@@ -92,11 +100,16 @@ func Extract(inputPath, outputPath string, opts Options) error {
 		}
 	}
 
-	if opts.Cleanup {
+	started := time.Now()
+	if opts.cleanupEnabled() {
 		if err := checkOllama(opts); err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "cleanup enabled via ollama vision (%s)\n", opts.ollamaModel())
+		mode := "plain text"
+		if opts.CleanupMarkdown {
+			mode = "markdown"
+		}
+		fmt.Fprintf(os.Stderr, "cleanup enabled via ollama vision (%s, %s)\n", opts.ollamaModel(), mode)
 	}
 
 	tmpDir, err := os.MkdirTemp("", "ocr-pdf-extractor-*")
@@ -106,7 +119,7 @@ func Extract(inputPath, outputPath string, opts Options) error {
 	defer os.RemoveAll(tmpDir)
 
 	// Vision cleanup needs each page image, so skip the whole-document fast path.
-	useWholeDoc := !opts.ForceOCR && !opts.Cleanup && firstPage == 1
+	useWholeDoc := !opts.ForceOCR && !opts.cleanupEnabled() && firstPage == 1
 	if useWholeDoc {
 		text, usedFastPath, err := tryWholeDocumentText(inputPath, lastPage, opts)
 		if err != nil {
@@ -131,7 +144,7 @@ func Extract(inputPath, outputPath string, opts Options) error {
 			return fmt.Errorf("page %d: %w", page, err)
 		}
 
-		if opts.Cleanup {
+		if opts.cleanupEnabled() {
 			fmt.Fprintf(os.Stderr, "  cleanup via ollama (image+text)\n")
 			pageText, err = cleanupPage(inputPath, tmpDir, pageText, page, opts)
 			if err != nil {
@@ -144,7 +157,13 @@ func Extract(inputPath, outputPath string, opts Options) error {
 		}
 	}
 
-	return out.close()
+	if err := out.close(); err != nil {
+		return err
+	}
+	if opts.cleanupEnabled() {
+		reportCleanupRuntime(time.Since(started), lastPage-firstPage+1)
+	}
+	return nil
 }
 
 func pageCount(inputPath string) (int, error) {

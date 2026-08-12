@@ -13,7 +13,7 @@ pdftopages → pdftotext (fast) | pdfimages → tesseract (OCR)
 2. Otherwise, for each page:
    - Try **pdftotext** for that page.
    - If insufficient text, extract embedded images with **pdfimages** and run **tesseract** OCR on each.
-3. Optionally (`-cleanup`), render the page with **pdftoppm** and send **page image + extracted text** to **Ollama** so a vision model can correct OCR/spelling against the page.
+3. Optionally (`-cleanup`), render the page with **pdftoppm** and send **page image + extracted text** to **Ollama** so a vision model can correct OCR/spelling against the page. Add `-cleanup-markdown` to also infer headings and emphasis from on-page visual formatting.
 
 `pdftopages` is the per-page orchestration loop implemented in Go (not a separate binary).
 
@@ -59,6 +59,7 @@ ocr-pdf-extractor [options] <input.pdf> <output.txt>
 | `-max-pages` | `0` (through end) | Process only N pages starting at `-first-page` |
 | `-layout` | `false` | Preserve physical multi-column layout (`pdftotext -layout`). Default is reading order (one column at a time), which is usually better for body text. |
 | `-cleanup` | `false` | Per-page OCR/spelling cleanup via Ollama using page image + text (slow) |
+| `-cleanup-markdown` | `false` | With cleanup, emit Markdown inferred from visual formatting (headings by size, bold/italic, lists). Implies `-cleanup`. |
 | `-cleanup-dpi` | `120` | `pdftoppm` DPI for cleanup page images |
 | `-ollama-url` | `http://127.0.0.1:11434` | Ollama base URL |
 | `-ollama-model` | `ministral-3:latest` | Ollama model used by `-cleanup` |
@@ -76,6 +77,7 @@ curl -L -o /tmp/D6_Space_Opera.pdf \
 ./ocr-pdf-extractor /tmp/D6_Space_Opera.pdf /tmp/d6-space-opera.txt
 ./ocr-pdf-extractor -force-ocr /tmp/D6_Space_Opera.pdf /tmp/d6-space-opera-ocr.txt
 ./ocr-pdf-extractor -cleanup -first-page 5 -max-pages 6 /tmp/D6_Space_Opera.pdf /tmp/d6-space-opera-clean.txt
+./ocr-pdf-extractor -cleanup-markdown -first-page 9 -max-pages 1 /tmp/D6_Space_Opera.pdf /tmp/d6-space-opera-clean.md
 ```
 
 Or run the smoke test script:

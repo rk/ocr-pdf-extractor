@@ -16,6 +16,7 @@ func main() {
 	firstPage := flag.Int("first-page", 1, "first page to process (1-based)")
 	layout := flag.Bool("layout", false, "preserve physical multi-column layout (pdftotext -layout); default is reading order")
 	cleanup := flag.Bool("cleanup", false, "per-page OCR/spelling cleanup via Ollama using page image + text")
+	cleanupMarkdown := flag.Bool("cleanup-markdown", false, "with cleanup, emit Markdown inferred from visual formatting (implies -cleanup)")
 	ollamaURL := flag.String("ollama-url", extract.DefaultOllamaURL, "Ollama base URL")
 	ollamaModel := flag.String("ollama-model", extract.DefaultOllamaModel, "Ollama model for -cleanup (vision-capable recommended)")
 	cleanupDPI := flag.Int("cleanup-dpi", extract.DefaultCleanupDPI, "page render DPI for -cleanup vision images")
@@ -47,7 +48,8 @@ func main() {
 		MaxPages:        *maxPages,
 		FirstPage:       *firstPage,
 		Layout:          *layout,
-		Cleanup:         *cleanup,
+		Cleanup:         *cleanup || *cleanupMarkdown,
+		CleanupMarkdown: *cleanupMarkdown,
 		OllamaURL:       *ollamaURL,
 		OllamaModel:     *ollamaModel,
 		CleanupDPI:      *cleanupDPI,

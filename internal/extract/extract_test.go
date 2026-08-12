@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseSubstantialImageCount(t *testing.T) {
@@ -93,6 +94,37 @@ func TestOllamaOptionDefaults(t *testing.T) {
 	}
 	if opts.ollamaModel() != DefaultOllamaModel {
 		t.Fatalf("ollamaModel() = %q, want %q", opts.ollamaModel(), DefaultOllamaModel)
+	}
+}
+
+func TestFormatDuration(t *testing.T) {
+	tests := []struct {
+		in   time.Duration
+		want string
+	}{
+		{0, "0s"},
+		{1500 * time.Millisecond, "2s"},
+		{45 * time.Second, "45s"},
+		{2*time.Minute + 5*time.Second, "2m 5s"},
+		{1*time.Hour + 2*time.Minute + 3*time.Second, "1h 2m 3s"},
+	}
+	for _, tc := range tests {
+		got := formatDuration(tc.in)
+		if got != tc.want {
+			t.Errorf("formatDuration(%v) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestCleanupEnabled(t *testing.T) {
+	if (Options{}).cleanupEnabled() {
+		t.Fatal("expected cleanup disabled by default")
+	}
+	if !(Options{Cleanup: true}).cleanupEnabled() {
+		t.Fatal("expected Cleanup to enable cleanup")
+	}
+	if !(Options{CleanupMarkdown: true}).cleanupEnabled() {
+		t.Fatal("expected CleanupMarkdown to enable cleanup")
 	}
 }
 
