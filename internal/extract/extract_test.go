@@ -69,6 +69,7 @@ func TestStripCleanupWrapper(t *testing.T) {
 		{"plain text", "plain text"},
 		{"```\nhello\n```", "hello"},
 		{"```text\nhello\nworld\n```", "hello\nworld"},
+		{"Here is the corrected text:\n\n```markdown\nhello\n```", "hello"},
 	}
 	for _, tc := range tests {
 		got := stripCleanupWrapper(tc.in)
@@ -84,16 +85,6 @@ func TestStripMarkdownArtifacts(t *testing.T) {
 	got := stripMarkdownArtifacts(in)
 	if got != want {
 		t.Fatalf("stripMarkdownArtifacts() = %q, want %q", got, want)
-	}
-}
-
-func TestOllamaOptionDefaults(t *testing.T) {
-	opts := Options{}
-	if opts.ollamaURL() != DefaultOllamaURL {
-		t.Fatalf("ollamaURL() = %q, want %q", opts.ollamaURL(), DefaultOllamaURL)
-	}
-	if opts.ollamaModel() != DefaultOllamaModel {
-		t.Fatalf("ollamaModel() = %q, want %q", opts.ollamaModel(), DefaultOllamaModel)
 	}
 }
 

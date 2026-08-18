@@ -20,6 +20,9 @@ func main() {
 	ollamaURL := flag.String("ollama-url", extract.DefaultOllamaURL, "Ollama base URL")
 	ollamaModel := flag.String("ollama-model", extract.DefaultOllamaModel, "Ollama model for -cleanup (vision-capable recommended)")
 	cleanupDPI := flag.Int("cleanup-dpi", extract.DefaultCleanupDPI, "page render DPI for -cleanup vision images")
+	glmOCR := flag.Bool("glm-ocr", false, "dual GLM-OCR passes (text+table) per page, merged via Ministral text-only")
+	glmOCRModel := flag.String("glm-ocr-model", extract.DefaultGlmOCRModel, "Ollama model for -glm-ocr page recognition")
+	keepScratch := flag.Bool("keep-scratch", false, "keep .[output]-scratch after successful -glm-ocr run")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: ocr-pdf-extractor [options] <input.pdf> <output.txt>\n")
@@ -53,6 +56,9 @@ func main() {
 		OllamaURL:       *ollamaURL,
 		OllamaModel:     *ollamaModel,
 		CleanupDPI:      *cleanupDPI,
+		GlmOCR:          *glmOCR,
+		GlmOCRModel:     *glmOCRModel,
+		KeepScratch:     *keepScratch,
 	}
 
 	if err := extract.Extract(inputPath, outputPath, opts); err != nil {

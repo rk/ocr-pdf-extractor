@@ -1,12 +1,8 @@
 package extract
 
 import (
-	"bytes"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,9 +13,7 @@ import (
 )
 
 const (
-	DefaultOllamaURL   = "http://127.0.0.1:11434"
-	DefaultOllamaModel = "ministral-3:latest"
-	DefaultCleanupDPI  = 120
+	DefaultCleanupDPI = 120
 
 	cleanupPlainSystemPrompt = `You are correcting OCR and spelling errors in extracted PDF text using the page image as ground truth.
 
@@ -59,52 +53,11 @@ var (
 	mdHeading = regexp.MustCompile(`(?m)^#{1,6}\s+`)
 )
 
-type ollamaGenerateRequest struct {
-	Model   string                 `json:"model"`
-	Prompt  string                 `json:"prompt"`
-	Stream  bool                   `json:"stream"`
-	System  string                 `json:"system,omitempty"`
-	Images  []string               `json:"images,omitempty"`
-	Options map[string]interface{} `json:"options,omitempty"`
-}
-
-type ollamaGenerateResponse struct {
-	Response string `json:"response"`
-	Error    string `json:"error,omitempty"`
-}
-
-func (o Options) ollamaURL() string {
-	if o.OllamaURL != "" {
-		return strings.TrimRight(o.OllamaURL, "/")
-	}
-	return DefaultOllamaURL
-}
-
-func (o Options) ollamaModel() string {
-	if o.OllamaModel != "" {
-		return o.OllamaModel
-	}
-	return DefaultOllamaModel
-}
-
 func (o Options) cleanupDPI() int {
 	if o.CleanupDPI > 0 {
 		return o.CleanupDPI
 	}
 	return DefaultCleanupDPI
-}
-
-func checkOllama(opts Options) error {
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(opts.ollamaURL() + "/api/tags")
-	if err != nil {
-		return fmt.Errorf("ollama not reachable at %s: %w", opts.ollamaURL(), err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ollama returned HTTP %d from %s/api/tags", resp.StatusCode, opts.ollamaURL())
-	}
-	return nil
 }
 
 func renderPagePNG(inputPath, tmpDir string, page, dpi int) (string, error) {
@@ -163,46 +116,18 @@ func cleanupWithImage(text string, imagePNG []byte, opts Options) (string, error
 		prompt = "Here is the extracted text for this page image. Correct it and format it as Markdown using the image as ground truth for wording and visual structure:\n\n" + text
 	}
 
-	reqBody := ollamaGenerateRequest{
-		Model:  opts.ollamaModel(),
-		System: system,
-		Prompt: prompt,
-		Stream: false,
-		Images: []string{base64.StdEncoding.EncodeToString(imagePNG)},
-		Options: map[string]interface{}{
-			"temperature": 0.1,
-		},
-	}
-
-	payload, err := json.Marshal(reqBody)
+	cleaned, err := ollamaGenerate(
+		opts,
+		opts.ollamaModel(),
+		system,
+		prompt,
+		[]string{base64.StdEncoding.EncodeToString(imagePNG)},
+		0.1,
+	)
 	if err != nil {
-		return "", fmt.Errorf("encoding ollama request: %w", err)
+		return "", err
 	}
-
-	client := &http.Client{Timeout: 15 * time.Minute}
-	resp, err := client.Post(opts.ollamaURL()+"/api/generate", "application/json", bytes.NewReader(payload))
-	if err != nil {
-		return "", fmt.Errorf("ollama generate: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("reading ollama response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("ollama generate HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	var parsed ollamaGenerateResponse
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", fmt.Errorf("decoding ollama response: %w", err)
-	}
-	if parsed.Error != "" {
-		return "", fmt.Errorf("ollama: %s", parsed.Error)
-	}
-
-	cleaned := stripCleanupWrapper(parsed.Response)
+	cleaned = stripCleanupWrapper(cleaned)
 	if !opts.CleanupMarkdown {
 		cleaned = stripMarkdownArtifacts(cleaned)
 	}
@@ -213,18 +138,7 @@ func cleanupWithImage(text string, imagePNG []byte, opts Options) (string, error
 }
 
 func stripCleanupWrapper(s string) string {
-	s = strings.TrimSpace(s)
-	if strings.HasPrefix(s, "```") {
-		s = strings.TrimPrefix(s, "```")
-		if nl := strings.IndexByte(s, '\n'); nl >= 0 {
-			s = s[nl+1:]
-		}
-		if idx := strings.LastIndex(s, "```"); idx >= 0 {
-			s = s[:idx]
-		}
-		s = strings.TrimSpace(s)
-	}
-	return s
+	return stripModelOutput(s)
 }
 
 func stripMarkdownArtifacts(s string) string {

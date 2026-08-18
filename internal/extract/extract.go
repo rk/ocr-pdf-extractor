@@ -44,6 +44,12 @@ type Options struct {
 	OllamaModel string
 	// CleanupDPI is the pdftoppm resolution used for cleanup page images.
 	CleanupDPI int
+	// GlmOCR runs dual GLM-OCR passes (text + table) per page, then Ministral merge.
+	GlmOCR bool
+	// GlmOCRModel is the Ollama model for GLM-OCR page recognition (default glm-ocr:latest).
+	GlmOCRModel string
+	// KeepScratch retains .[output]-scratch after a successful -glm-ocr run.
+	KeepScratch bool
 }
 
 func (o Options) minChars() int {
@@ -68,6 +74,10 @@ func (o Options) cleanupEnabled() bool {
 func Extract(inputPath, outputPath string, opts Options) error {
 	if err := validatePaths(inputPath, outputPath); err != nil {
 		return err
+	}
+
+	if opts.GlmOCR {
+		return extractWithGlmOCR(inputPath, outputPath, opts)
 	}
 
 	out, err := openOutput(outputPath)
