@@ -4,3 +4,5 @@
 .pdftest/
 *.pdf
 .DS_Store
+.*-scratch/
+OpenD6-*.txt

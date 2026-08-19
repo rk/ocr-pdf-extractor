@@ -48,9 +48,12 @@ Rules:
 )
 
 var (
-	mdBoldRE  = regexp.MustCompile(`\*\*([^*]+)\*\*`)
-	mdLinkRE  = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
-	mdHeading = regexp.MustCompile(`(?m)^#{1,6}\s+`)
+	mdBoldRE        = regexp.MustCompile(`\*\*([^*]+)\*\*`)
+	mdLinkRE        = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
+	mdHeading       = regexp.MustCompile(`(?m)^#{1,6}\s+`)
+	modelPreambleRE = regexp.MustCompile(`(?is)^(?:here is (?:the )?(?:merged|corrected|formatted).*?:\s*)+`)
+	fenceLineRE     = regexp.MustCompile("(?m)^\\s*`{3}\\w*\\s*$")
+	fencedBlockRE   = regexp.MustCompile("(?s)`{3}\\w*\\n(.*?)`{3}")
 )
 
 func (o Options) cleanupDPI() int {
@@ -139,6 +142,52 @@ func cleanupWithImage(text string, imagePNG []byte, opts Options) (string, error
 
 func stripCleanupWrapper(s string) string {
 	return stripModelOutput(s)
+}
+
+func stripModelOutput(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return s
+	}
+
+	s = modelPreambleRE.ReplaceAllString(s, "")
+	s = strings.TrimSpace(s)
+
+	if strings.Contains(s, "```") {
+		if inner := extractFencedContent(s); inner != "" {
+			s = inner
+		} else if strings.HasPrefix(s, "```") {
+			s = strings.TrimPrefix(s, "```")
+			if nl := strings.IndexByte(s, '\n'); nl >= 0 {
+				s = s[nl+1:]
+			}
+			if idx := strings.LastIndex(s, "```"); idx >= 0 {
+				s = s[:idx]
+			}
+			s = strings.TrimSpace(s)
+		}
+	}
+
+	s = fenceLineRE.ReplaceAllString(s, "")
+	return strings.TrimSpace(s)
+}
+
+func extractFencedContent(s string) string {
+	matches := fencedBlockRE.FindAllStringSubmatch(s, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+	best := ""
+	for _, m := range matches {
+		if len(m) < 2 {
+			continue
+		}
+		inner := strings.TrimSpace(m[1])
+		if len(inner) > len(best) {
+			best = inner
+		}
+	}
+	return best
 }
 
 func stripMarkdownArtifacts(s string) string {

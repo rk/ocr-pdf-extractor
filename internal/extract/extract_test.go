@@ -88,6 +88,25 @@ func TestStripMarkdownArtifacts(t *testing.T) {
 	}
 }
 
+func TestOllamaOptionDefaults(t *testing.T) {
+	opts := Options{}
+	if opts.ollamaURL() != DefaultOllamaURL {
+		t.Fatalf("ollamaURL() = %q, want %q", opts.ollamaURL(), DefaultOllamaURL)
+	}
+	if opts.ollamaModel() != DefaultOllamaModel {
+		t.Fatalf("ollamaModel() = %q, want %q", opts.ollamaModel(), DefaultOllamaModel)
+	}
+}
+
+func TestStripModelOutputRemovesPreambleAndFence(t *testing.T) {
+	in := "Here is the merged Markdown document for this page:\n\n```markdown\n# Title\n\nBody text.\n```"
+	want := "# Title\n\nBody text."
+	got := stripModelOutput(in)
+	if got != want {
+		t.Fatalf("stripModelOutput() = %q, want %q", got, want)
+	}
+}
+
 func TestFormatDuration(t *testing.T) {
 	tests := []struct {
 		in   time.Duration

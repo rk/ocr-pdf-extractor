@@ -29,12 +29,6 @@ type ollamaGenerateResponse struct {
 	Error    string `json:"error,omitempty"`
 }
 
-type ollamaTagsResponse struct {
-	Models []struct {
-		Name string `json:"name"`
-	} `json:"models"`
-}
-
 func (o Options) ollamaURL() string {
 	if o.OllamaURL != "" {
 		return strings.TrimRight(o.OllamaURL, "/")
@@ -49,13 +43,6 @@ func (o Options) ollamaModel() string {
 	return DefaultOllamaModel
 }
 
-func (o Options) glmOCRModel() string {
-	if o.GlmOCRModel != "" {
-		return o.GlmOCRModel
-	}
-	return DefaultGlmOCRModel
-}
-
 func checkOllama(opts Options) error {
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(opts.ollamaURL() + "/api/tags")
@@ -65,48 +52,6 @@ func checkOllama(opts Options) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("ollama returned HTTP %d from %s/api/tags", resp.StatusCode, opts.ollamaURL())
-	}
-	return nil
-}
-
-func checkOllamaModels(opts Options, models ...string) error {
-	if err := checkOllama(opts); err != nil {
-		return err
-	}
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(opts.ollamaURL() + "/api/tags")
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("reading ollama tags: %w", err)
-	}
-	var tags ollamaTagsResponse
-	if err := json.Unmarshal(body, &tags); err != nil {
-		return fmt.Errorf("decoding ollama tags: %w", err)
-	}
-	available := make(map[string]bool, len(tags.Models))
-	for _, m := range tags.Models {
-		available[m.Name] = true
-	}
-	for _, want := range models {
-		if available[want] {
-			continue
-		}
-		// Ollama may list "glm-ocr:latest" while user passes "glm-ocr"
-		base := strings.SplitN(want, ":", 2)[0]
-		found := false
-		for name := range available {
-			if name == want || strings.HasPrefix(name, base+":") {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return fmt.Errorf("ollama model %q not found (run: ollama pull %s)", want, want)
-		}
 	}
 	return nil
 }
