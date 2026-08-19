@@ -62,7 +62,7 @@ func TestOptionsDefaults(t *testing.T) {
 	}
 }
 
-func TestStripCleanupWrapper(t *testing.T) {
+func TestStripModelOutput(t *testing.T) {
 	tests := []struct {
 		in, want string
 	}{
@@ -70,11 +70,12 @@ func TestStripCleanupWrapper(t *testing.T) {
 		{"```\nhello\n```", "hello"},
 		{"```text\nhello\nworld\n```", "hello\nworld"},
 		{"Here is the corrected text:\n\n```markdown\nhello\n```", "hello"},
+		{"Here is the merged Markdown document for this page:\n\n```markdown\n# Title\n\nBody text.\n```", "# Title\n\nBody text."},
 	}
 	for _, tc := range tests {
-		got := stripCleanupWrapper(tc.in)
+		got := stripModelOutput(tc.in)
 		if got != tc.want {
-			t.Errorf("stripCleanupWrapper(%q) = %q, want %q", tc.in, got, tc.want)
+			t.Errorf("stripModelOutput(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }
@@ -95,15 +96,6 @@ func TestOllamaOptionDefaults(t *testing.T) {
 	}
 	if opts.ollamaModel() != DefaultOllamaModel {
 		t.Fatalf("ollamaModel() = %q, want %q", opts.ollamaModel(), DefaultOllamaModel)
-	}
-}
-
-func TestStripModelOutputRemovesPreambleAndFence(t *testing.T) {
-	in := "Here is the merged Markdown document for this page:\n\n```markdown\n# Title\n\nBody text.\n```"
-	want := "# Title\n\nBody text."
-	got := stripModelOutput(in)
-	if got != want {
-		t.Fatalf("stripModelOutput() = %q, want %q", got, want)
 	}
 }
 

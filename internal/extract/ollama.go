@@ -29,6 +29,11 @@ type ollamaGenerateResponse struct {
 	Error    string `json:"error,omitempty"`
 }
 
+var (
+	ollamaProbeClient    = &http.Client{Timeout: 5 * time.Second}
+	ollamaGenerateClient = &http.Client{Timeout: 15 * time.Minute}
+)
+
 func (o Options) ollamaURL() string {
 	if o.OllamaURL != "" {
 		return strings.TrimRight(o.OllamaURL, "/")
@@ -44,8 +49,7 @@ func (o Options) ollamaModel() string {
 }
 
 func checkOllama(opts Options) error {
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(opts.ollamaURL() + "/api/tags")
+	resp, err := ollamaProbeClient.Get(opts.ollamaURL() + "/api/tags")
 	if err != nil {
 		return fmt.Errorf("ollama not reachable at %s: %w", opts.ollamaURL(), err)
 	}
@@ -53,6 +57,7 @@ func checkOllama(opts Options) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("ollama returned HTTP %d from %s/api/tags", resp.StatusCode, opts.ollamaURL())
 	}
+	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
 }
 
@@ -75,7 +80,7 @@ func ollamaGenerate(opts Options, model, system, prompt string, images []string,
 		return "", fmt.Errorf("encoding ollama request: %w", err)
 	}
 
-	client := &http.Client{Timeout: 15 * time.Minute}
+	client := ollamaGenerateClient
 	resp, err := client.Post(opts.ollamaURL()+"/api/generate", "application/json", bytes.NewReader(payload))
 	if err != nil {
 		return "", fmt.Errorf("ollama generate: %w", err)

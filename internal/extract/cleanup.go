@@ -13,7 +13,8 @@ import (
 )
 
 const (
-	DefaultCleanupDPI = 120
+	DefaultCleanupDPI      = 120
+	cleanupTemperature     = 0.1
 
 	cleanupPlainSystemPrompt = `You are correcting OCR and spelling errors in extracted PDF text using the page image as ground truth.
 
@@ -51,7 +52,7 @@ var (
 	mdBoldRE        = regexp.MustCompile(`\*\*([^*]+)\*\*`)
 	mdLinkRE        = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 	mdHeading       = regexp.MustCompile(`(?m)^#{1,6}\s+`)
-	modelPreambleRE = regexp.MustCompile(`(?is)^(?:here is (?:the )?(?:merged|corrected|formatted).*?:\s*)+`)
+	modelPreambleRE = regexp.MustCompile(`(?is)^(?:here is (?:the )?(?:corrected|formatted).*?:\s*)+`)
 	fenceLineRE     = regexp.MustCompile("(?m)^\\s*`{3}\\w*\\s*$")
 	fencedBlockRE   = regexp.MustCompile("(?s)`{3}\\w*\\n(.*?)`{3}")
 )
@@ -125,12 +126,12 @@ func cleanupWithImage(text string, imagePNG []byte, opts Options) (string, error
 		system,
 		prompt,
 		[]string{base64.StdEncoding.EncodeToString(imagePNG)},
-		0.1,
+		cleanupTemperature,
 	)
 	if err != nil {
 		return "", err
 	}
-	cleaned = stripCleanupWrapper(cleaned)
+	cleaned = stripModelOutput(cleaned)
 	if !opts.CleanupMarkdown {
 		cleaned = stripMarkdownArtifacts(cleaned)
 	}
@@ -138,10 +139,6 @@ func cleanupWithImage(text string, imagePNG []byte, opts Options) (string, error
 		return text, nil
 	}
 	return cleaned, nil
-}
-
-func stripCleanupWrapper(s string) string {
-	return stripModelOutput(s)
 }
 
 func stripModelOutput(s string) string {
@@ -173,21 +170,11 @@ func stripModelOutput(s string) string {
 }
 
 func extractFencedContent(s string) string {
-	matches := fencedBlockRE.FindAllStringSubmatch(s, -1)
-	if len(matches) == 0 {
+	m := fencedBlockRE.FindStringSubmatch(s)
+	if len(m) < 2 {
 		return ""
 	}
-	best := ""
-	for _, m := range matches {
-		if len(m) < 2 {
-			continue
-		}
-		inner := strings.TrimSpace(m[1])
-		if len(inner) > len(best) {
-			best = inner
-		}
-	}
-	return best
+	return strings.TrimSpace(m[1])
 }
 
 func stripMarkdownArtifacts(s string) string {

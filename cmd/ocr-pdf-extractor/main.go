@@ -48,7 +48,7 @@ func main() {
 		MaxPages:        *maxPages,
 		FirstPage:       *firstPage,
 		Layout:          *layout,
-		Cleanup:         *cleanup || *cleanupMarkdown,
+		Cleanup:         *cleanup,
 		CleanupMarkdown: *cleanupMarkdown,
 		OllamaURL:       *ollamaURL,
 		OllamaModel:     *ollamaModel,
